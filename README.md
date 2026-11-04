@@ -8,10 +8,13 @@ Situs statis tanpa build, dengan Firebase Firestore sebagai penyimpanan bersama.
 ```
 remi-shake-shot/
 ├── index.html            halaman utama
+├── admin.html            dashboard admin (buka di /admin)
 ├── css/style.css         tampilan, kartu, meja
 ├── js/
 │   ├── app.js            tampilan dan alur permainan
 │   ├── logic.js          aturan permainan (fungsi murni, ada tesnya)
+│   ├── admin.js          dashboard admin: lihat meja, atur tingkat kartu pemain
+│   ├── sound.js          sound effect (dibuat dengan WebAudio, tanpa file audio)
 │   ├── db.js             adapter Firebase Firestore
 │   └── firebase-config.js  isi dengan konfigurasi Firebase kamu
 ├── test/logic.test.mjs   tes aturan (npm test)
@@ -55,6 +58,23 @@ npm test        # tes aturan permainan
 - Kartu semua pemain tersimpan di Firestore dan bisa dibaca siapa pun yang membuka alat developer
   browser. Cukup untuk main santai bersama teman, belum cocok untuk taruhan.
 - Aturan yang ditafsirkan sendiri: pemain yang angka 2-nya kena bom dilewati sampai putaran selesai,
-  "Murni" berarti tidak ada J, Q, K di tangan awal, dan angka 2 tidak boleh masuk urutan.
+  "Murni" berarti tidak ada J, Q, K di tangan awal.
   Semuanya ada di `js/logic.js`.
+- Angka 2 adalah joker: selain jadi kartu tertinggi, ia bisa menggantikan kartu apa pun saat dirangkai
+  bersama kartu lain (dos, triple, shake shot, urutan, bom). Game memilih bacaan terkuat yang sah dan
+  menampilkannya, misalnya "(2 jadi 8)". Joker butuh minimal satu kartu bukan 2, kombinasi berisi joker
+  tidak bisa dipotong bom, dan 2 yang jadi 3 boleh dipakai untuk membuka permainan. Kalau satu set kartu
+  bisa dibaca lebih dari satu jenis, bom lebih diutamakan, lalu shake shot, lalu urutan.
+- Suara: ada tombol 🔊/🔇 di pojok atas, pilihannya tersimpan di browser. Suara mulai aktif setelah
+  kamu menyentuh layar sekali (aturan browser).
 - Data meja tidak dihapus otomatis. Hapus koleksi `games` di Firebase Console sesekali.
+- Dashboard admin ada di `/admin` (login username dan password). Admin melihat semua meja, memilih meja,
+  lalu menyetel tiap pemain: **Busuk** (kartu paling lemah, tanpa 2 dan As), **Biasa** (acak), atau **Hoki**
+  (tangan "Murni" penuh 2 dan As, yang menurut aturan game langsung menang, jadi pasti juara 1). Pengaturan
+  berlaku saat kartu dibagikan berikutnya, atau langsung lewat tombol "Bagikan ulang sekarang". Hoki maksimal
+  3 orang per meja. Pengaturan disimpan di `games/<kode>/rig/cfg`.
+- Login admin hanya pintu di tampilan: passwordnya disimpan sebagai hash di `js/admin.js`, tetapi aturan
+  Firestore masih mengizinkan semua pemain menulis, dan pengaturan admin bisa dibaca lewat alat developer
+  browser. Cukup untuk main santai bersama teman. Untuk pengamanan sungguhan, pakai Firebase Auth email/password
+  untuk admin dan batasi penulisan `rig` di `firestore.rules`. Ganti password dengan membuat hash SHA-256 baru
+  dari `username:password` lalu isi `ADMIN_HASH`.
