@@ -14,6 +14,9 @@ const wrapDoc=s=>({id:s.id,exists:s.exists(),data:()=>s.data()});
 const wrapQuery=q=>({docs:q.docs.map(wrapDoc)});
 
 export async function connectDb(){
+  if(Object.values(firebaseConfig).some(v=>String(v).includes('ISI_'))){
+    const e=new Error('config-belum-diisi'); e.code='config-belum-diisi'; throw e;
+  }
   const app=initializeApp(firebaseConfig);
   const cred=await signInAnonymously(getAuth(app)); // tiap browser dapat id pemain sendiri
   const fs=getFirestore(app);

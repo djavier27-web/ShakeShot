@@ -58,13 +58,29 @@ function randCode(){
   return s;
 }
 
+function connectionHint(e){
+  const code=(e&&(e.code||e.message))||'tidak-diketahui';
+  const hints={
+    'config-belum-diisi':'js/firebase-config.js masih berisi placeholder ISI_... Salin konfigurasi web app dari Firebase Console.',
+    'auth/operation-not-allowed':'Anonymous Authentication belum aktif. Firebase Console > Authentication > Sign-in method > Anonymous > Enable.',
+    'auth/admin-restricted-operation':'Anonymous Authentication belum aktif. Firebase Console > Authentication > Sign-in method > Anonymous > Enable.',
+    'auth/configuration-not-found':'Authentication belum diaktifkan. Firebase Console > Authentication > Get started, lalu aktifkan Anonymous.',
+    'auth/api-key-not-valid.-please-pass-a-valid-api-key.':'apiKey di js/firebase-config.js salah. Salin ulang dari Firebase Console.',
+    'auth/invalid-api-key':'apiKey di js/firebase-config.js salah. Salin ulang dari Firebase Console.',
+    'auth/unauthorized-domain':'Domain situs ini belum diizinkan. Firebase Console > Authentication > Settings > Authorized domains > tambahkan domain Vercel kamu.',
+    'auth/network-request-failed':'Koneksi internet bermasalah atau diblokir. Coba muat ulang.'
+  };
+  return 'Tidak bisa terhubung ke server ('+code+'). '+(hints[code]||'Buka konsol browser (F12 > Console) untuk detail errornya, lalu cek js/firebase-config.js, Anonymous Auth, dan Firestore.');
+}
+
 async function init(){
   render();
+  let connErr=null;
   try{
     const c=await connectDb();
     db=c.db; me=c.uid;
-  }catch(e){ console.error(e); }
-  if(!db){ errMsg='Tidak bisa terhubung ke server. Periksa isi js/firebase-config.js dan pastikan Anonymous Auth serta Firestore sudah aktif.'; render(); return; }
+  }catch(e){ console.error(e); connErr=e; }
+  if(!db){ errMsg=connectionHint(connErr); render(); return; }
   const saved=store.get('rss-code');
   if(saved&&myName){ joinGame(saved,true); }
   else render();
