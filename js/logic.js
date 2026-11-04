@@ -67,6 +67,71 @@ function deal(ids){
   ids.forEach((id,i)=>{hands[id]=deck.slice(i*13,i*13+13).sort((a,b)=>a-b);});
   return hands;
 }
+
+// ---------- pembagian kartu bertingkat (dashboard admin) ----------
+// busuk: kartu paling lemah yang bisa dicari. biasa: acak seperti biasa.
+// hoki: tangan "Murni" (tanpa J, Q, K) penuh 2 dan As. Murni langsung menang menurut aturan game,
+// jadi pemain hoki pasti menang di ronde itu. Pemain lain tidak pernah dibuat Murni.
+const isJQK=c=>{const r=rankOf(c);return r>=8&&r<=10;};
+function handPower(h){
+  const cnt={}; let p=0;
+  h.forEach(c=>{
+    const r=rankOf(c); cnt[r]=(cnt[r]||0)+1;
+    p+= r===12?7 : r===11?4 : r===10?2 : r===9?1.5 : r===8?1 : 0;
+    if(r===0) p+=0.5;
+  });
+  Object.values(cnt).forEach(n=>{ if(n===2) p+=2; else if(n===3) p+=3.5; else if(n>=4) p+=3; });
+  const keys=Object.keys(cnt).map(Number).filter(r=>r<=11).sort((a,b)=>a-b);
+  let run=1;
+  for(let i=1;i<=keys.length;i++){
+    if(i<keys.length&&keys[i]===keys[i-1]+1) run++;
+    else{ if(run>=4) p+=run*1.5; run=1; }
+  }
+  return p;
+}
+function rottenHand(pool){
+  let cand=pool.filter(c=>rankOf(c)<11);
+  if(cand.length<13) cand=pool.slice();
+  const pick=shuffle(cand);
+  const h=pick.slice(0,13), rest=pick.slice(13);
+  const score=x=>handPower(x)+(x.some(isJQK)?0:100); // jangan sampai jadi Murni
+  let best=score(h);
+  for(let it=0;it<2500&&rest.length;it++){
+    const i=Math.floor(Math.random()*h.length), j=Math.floor(Math.random()*rest.length);
+    const a=h[i]; h[i]=rest[j];
+    const sc=score(h);
+    if(sc<=best){ best=sc; rest[j]=a; } else h[i]=a;
+  }
+  return h;
+}
+function dealRigged(ids,levels){
+  levels=levels||{};
+  const lv=id=>levels[id]==='hoki'||levels[id]==='busuk'?levels[id]:'biasa';
+  if(ids.every(id=>lv(id)==='biasa')) return deal(ids);
+  let pool=shuffle([...Array(52).keys()]);
+  const hands={};
+  const remove=cards=>{ pool=pool.filter(c=>!cards.includes(c)); };
+  ids.filter(id=>lv(id)==='hoki').forEach(id=>{
+    const nonJ=pool.filter(c=>!isJQK(c));
+    const high=shuffle(nonJ.filter(c=>rankOf(c)>=11)), low=shuffle(nonJ.filter(c=>rankOf(c)<11));
+    hands[id]=high.concat(low).slice(0,13); remove(hands[id]);
+  });
+  ids.filter(id=>lv(id)==='busuk').forEach(id=>{ hands[id]=rottenHand(pool); remove(hands[id]); });
+  ids.filter(id=>lv(id)==='biasa').forEach(id=>{ hands[id]=pool.slice(0,13); remove(hands[id]); });
+  // Pemain bukan hoki tidak boleh kebetulan Murni, kalau tidak dia ikut "menang" dan bisa merebut juara 1.
+  ids.filter(id=>lv(id)!=='hoki'&&!hands[id].some(isJQK)).forEach(id=>{
+    const need=hands[id];
+    let from=null;
+    const pj=pool.findIndex(isJQK);
+    const donor=ids.find(o=>o!==id&&lv(o)==='biasa'&&hands[o].filter(isJQK).length>=2);
+    const give=need.findIndex(c=>rankOf(c)<8);
+    const gi=give>=0?give:0;
+    if(pj>=0){ const t=need[gi]; need[gi]=pool[pj]; pool[pj]=t; from='pool'; }
+    else if(donor){ const di=hands[donor].findIndex(isJQK); const t=need[gi]; need[gi]=hands[donor][di]; hands[donor][di]=t; from='donor'; }
+  });
+  ids.forEach(id=>{ hands[id].sort((a,b)=>a-b); });
+  return hands;
+}
 const isMurni=h=>!h.some(c=>rankOf(c)>=8&&rankOf(c)<=10);
 function leaderOf(ids,hands){
   const threes=id=>hands[id].filter(c=>rankOf(c)===0).length;
@@ -190,4 +255,4 @@ function checkPlay(s,hand,sel){
   return {ok:true,combo:pool[0],msg:label(pool[0])};
 }
 
-export {WILD,interpret,SUITS,RANKS,SUIT_NAME,rankOf,suitOf,isRed,classify,label,beats,shuffle,deal,isMurni,leaderOf,newGameState,tally,nextAfter,applyMove,checkPlay};
+export {handPower,dealRigged,WILD,interpret,SUITS,RANKS,SUIT_NAME,rankOf,suitOf,isRed,classify,label,beats,shuffle,deal,isMurni,leaderOf,newGameState,tally,nextAfter,applyMove,checkPlay};

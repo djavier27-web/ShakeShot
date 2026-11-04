@@ -1,5 +1,6 @@
-import {SUITS,RANKS,SUIT_NAME,rankOf,suitOf,isRed,label,deal,newGameState,applyMove,checkPlay} from './logic.js';
+import {SUITS,RANKS,SUIT_NAME,rankOf,suitOf,isRed,label,deal,newGameState,applyMove,checkPlay,WILD,dealRigged} from './logic.js';
 import {connectDb} from './db.js';
+import * as sfx from './sound.js';
 
 
 // ---------------- UI ----------------
@@ -58,6 +59,47 @@ function randCode(){
   return s;
 }
 
+
+// ---------------- suara ----------------
+const muteBtn=()=>'<button class="btn ghost small" id="bMute" aria-label="Suara" title="Nyalakan atau matikan suara">'+(sfx.isMuted()?'🔇':'🔊')+'</button>';
+document.addEventListener('click',e=>{
+  if(!e.target.closest('#bMute')) return;
+  sfx.setMuted(!sfx.isMuted());
+  document.querySelectorAll('#bMute').forEach(b=>{ b.textContent=sfx.isMuted()?'🔇':'🔊'; });
+  sfx.play('tick');
+});
+// Bandingkan state lama dan baru dari server, lalu bunyikan sesuai kejadian.
+function soundEvents(prev,next){
+  if(!prev||!next||next.phase==='lobby') return;
+  if(next.round!==prev.round){
+    sfx.play('deal');
+    if(next.phase==='finished'){ sfx.play('murni',0.8); }
+    else if(next.turn===me){ sfx.play('turn',0.9); }
+    return;
+  }
+  const lm=next.lastMove;
+  if(lm&&next.seq!==prev.seq){
+    if(lm.kind==='pass') sfx.play('pass');
+    else{
+      if(lm.type==='bom') sfx.play('bom');
+      else if(lm.type==='shake') sfx.play('shake');
+      else if(lm.type==='straight') sfx.play('run');
+      else if(lm.key===WILD&&!(lm.wild&&lm.wild.length)) sfx.play('two');
+      else sfx.play('card');
+      if(lm.wild&&lm.wild.some(r=>r!==WILD)) sfx.play('wild',0.12);
+    }
+    if(!next.table&&prev.table&&next.phase==='playing') sfx.play('sweep',0.3);
+    if(next.out.length>prev.out.length&&next.phase!=='finished') sfx.play('out',0.35);
+    if(next.phase==='playing'&&next.turn===me&&lm.by!==me) sfx.play('turn',0.5);
+  }
+  if(next.phase==='finished'&&prev.phase!=='finished'){
+    const last=next.out[next.out.length-1];
+    if(next.out[0]===me) sfx.play('win',0.7);
+    else if(last===me&&next.out.length>1) sfx.play('lose',0.7);
+    else sfx.play('finish',0.7);
+  }
+}
+
 function connectionHint(e){
   const code=(e&&(e.code||e.message))||'tidak-diketahui';
   const hints={
@@ -90,7 +132,7 @@ function unsubscribeAll(){ unsubs.forEach(u=>{try{u();}catch(e){}}); unsubs=[]; 
 function subscribe(c){
   unsubscribeAll(); G=null; P={}; H={}; gotGame=false; selected=new Set(); code=c;
   const fail=e=>{ errMsg='Koneksi ke meja terputus ('+(e&&e.code||'error')+'). Muat ulang halaman untuk menyambung lagi.'; render(); };
-  unsubs.push(db.doc('games/'+c).onSnapshot(s=>{ gotGame=true; G=s.exists?s.data():null; clearTimeout(loadTimer); render(); },fail));
+  unsubs.push(db.doc('games/'+c).onSnapshot(s=>{ gotGame=true; const prev=G; G=s.exists?s.data():null; clearTimeout(loadTimer); soundEvents(prev,G); render(); },fail));
   unsubs.push(db.collection('games/'+c+'/players').onSnapshot(q=>{ P={}; q.docs.forEach(d=>{P[d.id]=d.data();}); render(); },fail));
   unsubs.push(db.collection('games/'+c+'/hands').onSnapshot(q=>{ H={}; q.docs.forEach(d=>{H[d.id]=d.data().cards||[];}); render(); },fail));
   loadTimer=setTimeout(()=>{ if(!gotGame){ errMsg='Belum bisa menjangkau meja. Cek koneksi, lalu tunggu sebentar.'; render(); } },10000);
@@ -138,7 +180,9 @@ function startGame(){
   return enqueue(async()=>{
     const ids=Object.keys(P).sort((a,b)=>P[a].t-P[b].t);
     if(ids.length<2||ids.length>4){ toast('Butuh 2 sampai 4 pemain.'); return; }
-    const hands=deal(ids); const names={};
+    let levels={};
+    try{ const rg=await db.doc('games/'+code+'/rig/cfg').get(); if(rg.exists) levels=rg.data().levels||{}; }catch(e){}
+    const hands=dealRigged(ids,levels); const names={};
     ids.forEach(id=>{names[id]=P[id].name;});
     for(const id of ids) await db.doc('games/'+code+'/hands/'+id).set({cards:hands[id]});
     const base=Object.assign({},G,{code,hostId:G.hostId});
@@ -158,7 +202,7 @@ function myHand(){ return (H[me]||[]).slice().sort((a,b)=>a-b); }
 function playSelected(){
   const hand=myHand(); const sel=[...selected].filter(c=>hand.includes(c)).sort((a,b)=>a-b);
   const chk=checkPlay(G,hand,sel);
-  if(!chk.ok||G.turn!==me){ toast(chk.msg); return; }
+  if(!chk.ok||G.turn!==me){ sfx.play('error'); toast(chk.msg); return; }
   const left=hand.filter(c=>!sel.includes(c));
   const next=applyMove(G,me,{type:'play',cards:sel,combo:chk.combo,handLeft:left.length});
   selected=new Set();
@@ -186,9 +230,10 @@ function rulesHTML(){
   +'<div><b>Mulai.</b> Pemain dengan angka 3 terbanyak jalan pertama. Kalau seimbang, pemilik 3 sekop jalan duluan. Kartu pertama harus memuat angka 3. Kalau tidak punya kartu kerajaan (J, Q, K) sama sekali, kamu <b>Murni</b> dan langsung menang.</div>'
   +'<div><b>Jenis kartu yang boleh dipasang.</b><ul>'
   +'<li>Satu kartu</li><li>Dos: dua kartu angka sama</li><li>Triple: tiga kartu angka sama</li>'
-  +'<li>Urutan: minimal 4 kartu berurutan (tanpa angka 2)</li>'
+  +'<li>Urutan: minimal 4 kartu berurutan (angka 2 asli tidak masuk urutan, tapi boleh jadi pengganti)</li>'
   +'<li>Shake shot: satu triple ditambah satu dos. Yang dibandingkan adalah angka triple-nya ("kepala")</li>'
   +'<li>Bom: minimal 4 pasang berurutan. Hanya bisa memotong angka 2 (satu kartu, dos, atau triple)</li></ul></div>'
+  +'<div><b>Angka 2 sebagai joker.</b> Selain jadi kartu tertinggi, angka 2 bisa menggantikan kartu apa pun saat dirangkai bersama kartu lain: melengkapi dos, triple, shake shot, urutan yang bolong, bahkan bom. Contoh: 5 6 7 + 2 jadi urutan 5 6 7 8, dan K + 2 jadi dos K. Game memilih bacaan terkuat yang sah, dan angka penggantinya ditulis di tombol Pasang, misalnya \"(2 jadi 8)\". Joker butuh minimal satu kartu bukan 2. Kombinasi yang berisi joker bukan \"2\", jadi tidak bisa dipotong bom. 2 yang jadi 3 boleh dipakai untuk membuka permainan.</div>'
   +'<div><b>Giliran.</b> Pasang jenis yang sama dengan angka lebih tinggi, atau pass. Pemain yang sudah pass tidak bisa masuk lagi sampai putaran berikutnya. Kalau semua pass, pemasang terakhir membuka putaran baru dengan kombinasi apa saja.</div>'
   +'<div class="assume">Dua hal ini saya tafsirkan sendiri: pemain yang angka 2-nya kena bom dilewati sampai putaran itu selesai, dan "Murni" berarti tidak ada J, Q, K di tangan pembagian awal.</div>'
   +'</div>';
@@ -212,14 +257,14 @@ function render(){
   const newHand=document.getElementById('hand'); if(newHand) newHand.scrollLeft=keepScroll;
 }
 function shell(inner){
-  return '<div class="topbar"><div class="brand"><i>♠</i> Remi Shake Shot</div></div>'+inner;
+  return '<div class="topbar"><div class="brand"><i>♠</i> Remi Shake Shot</div>'+muteBtn()+'</div>'+inner;
 }
 
 function entryHTML(){
   const fan=[0,25,43,47,48].map(c=>cardHTML(c)).join('');
   const warn=errMsg?'<p class="err">'+esc(errMsg)+'</p>':'';
   const ro=canWrite===false?'<p class="note">Aksesmu saat ini hanya melihat. Minta pemilik halaman menjadikanmu Contributor supaya bisa bermain.</p>':'';
-  return '<div class="topbar"><div class="brand"><i>♠</i> Remi Shake Shot</div></div>'
+  return '<div class="topbar"><div class="brand"><i>♠</i> Remi Shake Shot</div>'+muteBtn()+'</div>'
   +'<div class="entry"><div class="hero"><div class="fan">'+fan+'</div>'
   +'<h1>Remi<br><em>Shake</em> Shot</h1>'
   +'<p>Kartu remi untuk 2 sampai 4 orang. Buat meja, kirim kodenya ke teman, lalu mulai main bareng.</p></div>'
@@ -248,7 +293,7 @@ function lobbyHTML(){
   const list=ids.map(id=>'<li>'+avatar(id,P[id].name)+'<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(P[id].name)+(id===me?' <span class="muted">(kamu)</span>':'')+'</span>'
     +(id===G.hostId?'<span class="tag host">Host</span>':'')+'</li>').join('');
   const wins=Object.keys(G.wins||{}).length?'<p class="note">Permainan sebelumnya: '+(G.round||0)+' ronde.</p>':'';
-  return '<div class="topbar"><div class="brand"><i>♠</i> Remi Shake Shot</div><button class="btn ghost small" id="bLeave">Keluar</button></div>'
+  return '<div class="topbar"><div class="brand"><i>♠</i> Remi Shake Shot</div><span class="chips">'+muteBtn()+'<button class="btn ghost small" id="bLeave">Keluar</button></span></div>'
   +'<div class="lobby"><div class="muted" style="letter-spacing:.14em;text-transform:uppercase;font-size:12px">Kode meja</div>'
   +'<div class="codebig">'+esc(code)+'</div>'
   +'<p class="note">Kirim link halaman ini ke temanmu, lalu minta mereka memasukkan kode di atas. Pemain harus punya akses Contributor.</p>'
@@ -315,7 +360,7 @@ function tableHTML(){
   const sc=(G.wins&&G.wins[me])||0;
   const over=G.phase==='finished'?finishHTML():'';
   return '<div class="topbar"><div class="brand"><i>♠</i> Remi Shake Shot</div>'
-    +'<div class="chips"><span class="chip mono">Meja '+esc(code)+'</span><span class="chip">Ronde '+(G.round||1)+'</span><button class="btn ghost small" id="bLeave">Keluar</button></div></div>'
+    +'<div class="chips"><span class="chip mono">Meja '+esc(code)+'</span><span class="chip">Ronde '+(G.round||1)+'</span>'+muteBtn()+'<button class="btn ghost small" id="bLeave">Keluar</button></div></div>'
     +'<div class="opps">'+opps+'</div>'
     +'<div class="mid">'+mid+'</div>'
     +'<div class="eventlog">'+log+'</div>'
@@ -354,7 +399,7 @@ function bindTable(){
     hand.onclick=e=>{
       const el=e.target.closest('.card'); if(!el) return;
       const id=Number(el.dataset.id);
-      if(selected.has(id)) selected.delete(id); else selected.add(id);
+      if(selected.has(id)){ selected.delete(id); sfx.play('untick'); } else { selected.add(id); sfx.play('tick'); }
       const sl=hand.scrollLeft; render(); const h2=$('#hand'); if(h2) h2.scrollLeft=sl;
     };
   }
