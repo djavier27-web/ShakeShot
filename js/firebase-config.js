@@ -2,10 +2,10 @@
 // Project settings > General > Your apps > Web app > SDK setup and configuration.
 // Nilai ini boleh ada di kode publik; keamanan diatur oleh firestore.rules.
 export const firebaseConfig = {
-  apiKey: 'ISI_API_KEY',
-  authDomain: 'ISI_PROJECT_ID.firebaseapp.com',
-  projectId: 'ISI_PROJECT_ID',
-  storageBucket: 'ISI_PROJECT_ID.appspot.com',
-  messagingSenderId: 'ISI_SENDER_ID',
-  appId: 'ISI_APP_ID'
+  apiKey: 'AIzaSyDcWkDlKYwEB9fPfT6zJg8iFEUdTaW4tjQ',
+  authDomain: 'remi-9140e.firebaseapp.com',
+  projectId: 'remi-9140e',
+  storageBucket: 'remi-9140e.firebasestorage.app',
+  messagingSenderId: '227996872753',
+  appId: '1:227996872753:web:2a8a323f7da02162586510'
 };
