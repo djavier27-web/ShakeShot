@@ -4,6 +4,7 @@ const RANKS=['3','4','5','6','7','8','9','10','J','Q','K','A','2'];
 const rankOf=c=>c>>2, suitOf=c=>c&3;
 const isRed=c=>suitOf(c)>=2;
 const SUIT_NAME=['sekop','keriting','wajik','hati'];
+const WILD=12; // angka 2: paling tinggi, sekaligus joker pengganti kartu apa pun
 
 function classify(ids){
   const n=ids.length; if(!n) return null;
@@ -26,7 +27,16 @@ function classify(ids){
   if(keys.length>=4 && counts.every(c=>c===2) && top<=11 && consec(keys)) return {type:'bom',len:keys.length,key:top};
   return null;
 }
+function wildNote(c){
+  const w=(c.wild||[]).filter(r=>r!==WILD);
+  if(!w.length) return '';
+  return ' (2 jadi '+[...new Set(w)].map(r=>RANKS[r]).join(', ')+')';
+}
 function label(c){
+  const base=baseLabel(c);
+  return base+wildNote(c);
+}
+function baseLabel(c){
   const r=k=>RANKS[k];
   if(c.type==='single') return 'Kartu '+r(c.key);
   if(c.type==='pair') return 'Dos '+r(c.key);
@@ -70,7 +80,7 @@ function newGameState(base,ids,names,hands){
   const s={
     phase:'playing',code:base.code,hostId:base.hostId,order:ids,names,
     turn:null,table:null,passed:[],bombed:[],out:[],first:true,
-    round:(base.round||0)+1,wins:base.wins||{},losses:base.losses||{},murni:[],log:[]
+    seq:0,round:(base.round||0)+1,wins:base.wins||{},losses:base.losses||{},murni:[],log:[]
   };
   const m=ids.filter(id=>isMurni(hands[id]));
   if(m.length){
@@ -97,8 +107,10 @@ function applyMove(st,pid,act){
   const s=JSON.parse(JSON.stringify(st));
   const nm=id=>s.names[id]||'Pemain';
   const log=t=>{s.log=(s.log||[]).concat(t).slice(-6);};
+  s.seq=(s.seq||0)+1;
   if(act.type==='pass'){
     s.passed.push(pid); log(nm(pid)+' pass');
+    s.lastMove={seq:s.seq,by:pid,kind:'pass'};
   }else{
     const prev=s.table, c=act.combo;
     if(c.type==='bom' && prev && prev.type!=='bom'){
@@ -107,7 +119,8 @@ function applyMove(st,pid,act){
       if(!s.bombed.includes(b)) s.bombed.push(b);
       log(nm(pid)+' mem-bom angka 2 milik '+nm(b));
     }
-    s.table={by:pid,type:c.type,len:c.len,key:c.key,cards:act.cards};
+    s.table={by:pid,type:c.type,len:c.len,key:c.key,cards:act.cards,wild:c.wild||[]};
+    s.lastMove={seq:s.seq,by:pid,kind:'play',type:c.type,len:c.len,key:c.key,wild:c.wild||[]};
     s.first=false;
     log(nm(pid)+' pasang '+label(c));
     if(act.handLeft===0){ s.out.push(pid); log(nm(pid)+' kartunya habis (juara '+s.out.length+')'); }
@@ -130,19 +143,51 @@ function applyMove(st,pid,act){
   }
   return s;
 }
+// Angka 2 sebagai joker. Satu set kartu bisa dibaca beberapa cara, jadi kita coba semua
+// kemungkinan angka pengganti untuk tiap 2, lalu simpan yang membentuk kombinasi sah.
+// Aturan: 2 saja (satu, dos, triple) tetap 2 asli. Joker butuh minimal satu kartu bukan 2.
+function interpret(ids){
+  const wilds=ids.filter(c=>rankOf(c)===WILD).length;
+  const nat=ids.filter(c=>rankOf(c)!==WILD);
+  if(!wilds||!nat.length){
+    const c=classify(ids);
+    return c?[Object.assign(c,{ranks:ids.map(rankOf),wild:[]})]:[];
+  }
+  const natRanks=nat.map(rankOf), out=[];
+  (function rec(start,left,pick){
+    if(!left){
+      const ranks=natRanks.concat(pick);
+      const c=classify(ranks.map(r=>r<<2));
+      if(c) out.push(Object.assign(c,{ranks,wild:pick.slice()}));
+      return;
+    }
+    for(let r=start;r<=WILD;r++){pick.push(r);rec(r,left-1,pick);pick.pop();}
+  })(0,wilds,[]);
+  return out;
+}
+const PRIO={bom:5,shake:4,straight:3,triple:2,pair:1,single:0};
+const byStrength=(a,b)=>(PRIO[b.type]-PRIO[a.type])||(b.key-a.key);
+
 function checkPlay(s,hand,sel){
   if(!sel.length) return {ok:false,msg:'Pilih kartu dulu.'};
-  const combo=classify(sel);
-  if(!combo) return {ok:false,msg:'Kartu yang dipilih belum membentuk kombinasi.'};
-  if(s.first && !sel.some(c=>rankOf(c)===0)) return {ok:false,combo,msg:'Kartu pertama harus memuat angka 3.'};
-  if(s.table && !beats(s.table,combo)){
+  const cands=interpret(sel).sort(byStrength);
+  if(!cands.length) return {ok:false,msg:'Kartu yang dipilih belum membentuk kombinasi.'};
+  let pool=cands;
+  if(s.first){
+    pool=cands.filter(c=>c.ranks.includes(0));
+    if(!pool.length) return {ok:false,combo:cands[0],msg:'Kartu pertama harus memuat angka 3 (2 boleh jadi 3).'};
+  }
+  if(s.table){
+    const good=pool.filter(c=>beats(s.table,c));
+    if(good.length) return {ok:true,combo:good[0],msg:label(good[0])};
     const t=s.table;
+    const combo=pool.find(c=>c.type===t.type)||pool[0];
     if(combo.type==='bom') return {ok:false,combo,msg:'Bom hanya bisa memotong angka 2.'};
     if(combo.type!==t.type) return {ok:false,combo,msg:'Harus '+(t.type==='single'?'satu kartu':t.type==='pair'?'dos':t.type==='triple'?'triple':t.type==='shake'?'shake shot':t.type==='straight'?'urutan '+t.len+' kartu':'bom')+' yang lebih tinggi.'};
     if(combo.type==='straight' && combo.len!==t.len) return {ok:false,combo,msg:'Urutan harus '+t.len+' kartu.'};
     return {ok:false,combo,msg:'Belum cukup tinggi untuk mengalahkan meja.'};
   }
-  return {ok:true,combo,msg:label(combo)};
+  return {ok:true,combo:pool[0],msg:label(pool[0])};
 }
 
-export {SUITS,RANKS,SUIT_NAME,rankOf,suitOf,isRed,classify,label,beats,shuffle,deal,isMurni,leaderOf,newGameState,tally,nextAfter,applyMove,checkPlay};
+export {WILD,interpret,SUITS,RANKS,SUIT_NAME,rankOf,suitOf,isRed,classify,label,beats,shuffle,deal,isMurni,leaderOf,newGameState,tally,nextAfter,applyMove,checkPlay};
